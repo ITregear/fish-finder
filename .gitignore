@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+*.pyo
+
+venv/
+.venv/
+
+.env
+
+logs/
+
+*.egg-info/
+dist/
+build/
+
+profile.md
+.cursor/
