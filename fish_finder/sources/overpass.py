@@ -12,10 +12,11 @@ log = logging.getLogger(__name__)
 OVERPASS_ENDPOINTS = [
     "https://overpass-api.de/api/interpreter",
     "https://overpass.kumi.systems/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 ]
 
-MAX_RETRIES = 2
-RETRY_DELAY = 2.0
+MAX_RETRIES = 3
+RETRY_DELAY = 3.0
 
 
 def query(overpass_ql: str) -> list[dict]:
