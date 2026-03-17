@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
@@ -33,14 +34,17 @@ class Planner:
     def __init__(self, profile: Profile) -> None:
         self.profile = profile
         self.llm = LLMClient()
+        self.parse_model = os.getenv("ANTHROPIC_PARSE_MODEL", "claude-sonnet-4-20250514")
+        self.recommend_model = os.getenv("ANTHROPIC_RECOMMEND_MODEL", self.llm.model)
         self.weather_src = WeatherSource()
         self.waters_src = WatersSource()
         self.travel_src = TravelSource()
         self.parking_src = ParkingSource()
         self.transit_src = TransitSource()
         log.debug(
-            "Planner initialised for %s (%.4f, %.4f)",
+            "Planner initialised for %s (%.4f, %.4f) [parse_model=%s, recommend_model=%s]",
             profile.location.address, profile.location.lat, profile.location.lon,
+            self.parse_model, self.recommend_model,
         )
 
     def parse_query(self, query: str) -> FishingIntent:
@@ -57,7 +61,17 @@ class Planner:
             max_travel=p.max_travel_minutes,
             work_end=p.work_end,
         )
-        raw = self.llm.complete(system, query)
+        parse_cache_key = (
+            f"parse:{self.parse_model}:{datetime.now().date().isoformat()}:"
+            f"{self.profile.location.lat:.4f},{self.profile.location.lon:.4f}:"
+            f"{self.profile.max_travel_minutes}:{query.strip().lower()}"
+        )
+        raw = self.llm.complete(
+            system,
+            query,
+            model=self.parse_model,
+            cache_key=parse_cache_key,
+        )
         data = extract_json(raw)
         intent = FishingIntent(**data)
         log.info(
@@ -191,7 +205,7 @@ class Planner:
             extra_context=extra_context,
         )
 
-        raw = self.llm.complete(RECOMMEND_SYSTEM, user_msg)
+        raw = self.llm.complete(RECOMMEND_SYSTEM, user_msg, model=self.recommend_model)
         data = extract_json(raw)
         rec = SessionRecommendation(**data)
         log.info("Recommended: %s (%s)", rec.location_name, rec.location_type)

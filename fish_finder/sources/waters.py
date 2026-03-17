@@ -100,6 +100,8 @@ class WatersSource(DataSource):
 
         seen_names: set[str] = set()
         for r in raw_results:
+            if not _is_nominatim_water(r.get("class", ""), r.get("type", "")):
+                continue
             name = r.get("display_name", "").split(",")[0].strip()
             if not name or name in seen_names:
                 continue
@@ -149,29 +151,38 @@ class WatersSource(DataSource):
         return []
 
 
-_NON_WATER_TAGS = {
-    "shop", "amenity", "highway", "office", "tourism",
-    "craft", "building", "railway",
-}
+_WATER_NATURAL = {"water", "wetland", "spring", "hot_spring"}
+_WATER_LANDUSE = {"reservoir", "basin", "aquaculture"}
+_WATER_LEISURE = {"fishing"}
 
-_ALLOWED_AMENITIES = {"fountain"}
+_NOMINATIM_WATER_CLASSES = {"leisure", "natural", "waterway", "landuse", "water"}
+_NOMINATIM_WATER_TYPES = {"fishing", "water", "lake", "pond", "reservoir", "river", "canal", "wetland"}
+
+
+def _is_nominatim_water(osm_class: str, osm_type: str) -> bool:
+    """Filter Nominatim results to water bodies and fishing venues only."""
+    if osm_class in _NOMINATIM_WATER_CLASSES:
+        return True
+    if osm_type in _NOMINATIM_WATER_TYPES:
+        return True
+    return False
 
 
 def _is_water_feature(tags: dict[str, str]) -> bool:
-    """Return True if the element is plausibly a fishable water body or fishing venue."""
-    if any(tags.get(t) for t in ("natural", "water", "waterway", "landuse")):
+    """Return True only if the element is a water body or fishing venue."""
+    if tags.get("natural") in _WATER_NATURAL:
         return True
-    if tags.get("leisure") == "fishing" or tags.get("sport") == "fishing":
+    if tags.get("landuse") in _WATER_LANDUSE:
+        return True
+    if tags.get("leisure") in _WATER_LEISURE or tags.get("sport") == "fishing":
         return True
     if tags.get("fishing") == "yes":
         return True
-
-    for tag_key in _NON_WATER_TAGS:
-        val = tags.get(tag_key, "")
-        if val and val not in _ALLOWED_AMENITIES:
-            return False
-
-    return True
+    if tags.get("water"):
+        return True
+    if tags.get("waterway"):
+        return True
+    return False
 
 
 def _parse_elements(elements: list[dict[str, Any]], location: Location) -> list[WaterBody]:
