@@ -84,6 +84,13 @@ Parking — if driving and parking data is provided:
 Transit — if by train and transit data is provided:
 - Summarise the route concisely, e.g. "Euston → Tring (35 min), 20 min walk"
 
+Access control:
+- Each location has an "access" field: public, permit_required, members_only, private, or unknown
+- NEVER recommend a location with access "members_only" or "private" unless \
+the user's profile lists a permit that explicitly covers it
+- Prefer "public" and "unknown" waters when the user has no relevant permit
+- If a user holds a permit for a specific water, treat it as accessible
+
 Prioritise:
 1. Travel-to-fishing time ratio (short sessions need close venues)
 2. Species suitability for the water type and conditions

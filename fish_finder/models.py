@@ -9,12 +9,18 @@ class Location(BaseModel):
     lon: float
 
 
+class Permit(BaseModel):
+    name: str
+    covers: str
+
+
 class Profile(BaseModel):
     location: Location
     target_species: list[str] = []
     methods: list[str] = []
     max_travel_minutes: int = 60
     work_end: str = "17:00"
+    permits: list[Permit] = []
 
 
 class FishingIntent(BaseModel):
@@ -50,6 +56,7 @@ class WaterBody(BaseModel):
     lon: float
     distance_km: float = 0.0
     tags: dict[str, str] = {}
+    access: str = "unknown"
 
 
 class TravelInfo(BaseModel):

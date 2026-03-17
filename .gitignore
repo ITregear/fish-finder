@@ -8,6 +8,7 @@ venv/
 .env
 
 logs/
+.fish_finder_cache/
 
 *.egg-info/
 dist/
@@ -15,3 +16,4 @@ build/
 
 profile.md
 .cursor/
+CLAUDE.md

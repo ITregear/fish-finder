@@ -6,9 +6,12 @@ import os
 from anthropic import Anthropic
 from dotenv import load_dotenv
 
+from ..disk_cache import PersistentTTLCache
+
 load_dotenv()
 
 log = logging.getLogger(__name__)
+_LLM_CACHE = PersistentTTLCache[str]("llm_text", ttl_seconds=2 * 60 * 60, max_entries=256)
 
 
 class LLMClient:
@@ -26,6 +29,12 @@ class LLMClient:
         log.debug("LLM client initialised with model %s", self.model)
 
     def complete(self, system: str, user: str, max_tokens: int = 2048) -> str:
+        cache_key = f"{self.model}:{max_tokens}:{system}:{user}"
+        cached = _LLM_CACHE.get(cache_key)
+        if cached is not None:
+            log.debug("LLM cache hit")
+            return cached
+
         log.debug("LLM request: system=%d chars, user=%d chars", len(system), len(user))
         response = self.client.messages.create(
             model=self.model,
@@ -35,4 +44,5 @@ class LLMClient:
         )
         text = response.content[0].text
         log.debug("LLM response: %d chars, stop=%s", len(text), response.stop_reason)
+        _LLM_CACHE.set(cache_key, text)
         return text

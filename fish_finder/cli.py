@@ -256,18 +256,14 @@ def plan(
         _show_intent(intent)
 
     try:
-        weather = _step("Checking weather", planner.get_weather, intent)
+        weather, waters = _step("Fetching weather and nearby waters", planner.gather_base_context, intent)
     except Exception:
-        log.exception("Weather fetch failed")
-        weather = None
-        _step_warn("Checking weather", "failed, continuing")
-
-    try:
-        waters = _step("Finding nearby waters", planner.find_waters)
-    except Exception:
-        log.exception("Water body search failed")
+        log.exception("Base context fetch failed")
         _error("Failed to find water bodies. Check your connection.")
         raise typer.Exit(1)
+
+    if weather is None:
+        _step_warn("Checking weather", "failed, continuing")
 
     if not waters:
         _error("No water bodies found. Try increasing max_travel_minutes.")

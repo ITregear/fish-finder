@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import httpx
 
+from ..cache import TTLCache
+from ..disk_cache import PersistentTTLCache
 from ..models import Location, TransitLeg, TransitRoute, WaterBody
 from .base import DataSource
 
 log = logging.getLogger(__name__)
 
 TFL_JOURNEY_URL = "https://api.tfl.gov.uk/Journey/JourneyResults"
+MAX_WORKERS = 6
+_TRANSIT_CACHE = TTLCache[str, TransitRoute | None](ttl_seconds=30 * 60, max_entries=512)
+_TRANSIT_DISK_CACHE = PersistentTTLCache[dict]("transit_route", ttl_seconds=3 * 60 * 60, max_entries=2048)
 
 
 class TransitSource(DataSource):
@@ -28,6 +34,21 @@ class TransitSource(DataSource):
         time: str,
     ) -> TransitRoute | None:
         """Find a transit route departing at the given date (YYYY-MM-DD) and time (HH:MM)."""
+        cache_key = (
+            f"{origin.lat:.5f},{origin.lon:.5f}:"
+            f"{destination.lat:.5f},{destination.lon:.5f}:{date}:{time}"
+        )
+        found, cached = _TRANSIT_CACHE.get_with_presence(cache_key)
+        if found:
+            log.debug("TfL cache hit for %s", destination.name)
+            return cached
+        disk_cached = _TRANSIT_DISK_CACHE.get(cache_key)
+        if disk_cached is not None:
+            route = TransitRoute(**disk_cached)
+            _TRANSIT_CACHE.set(cache_key, route)
+            log.debug("TfL disk cache hit for %s", destination.name)
+            return route
+
         from_str = f"{origin.lat},{origin.lon}"
         to_str = f"{destination.lat},{destination.lon}"
         tfl_date = date.replace("-", "")
@@ -50,11 +71,13 @@ class TransitSource(DataSource):
             data = resp.json()
         except httpx.HTTPError as e:
             log.warning("TfL API failed for %s: %s", destination.name, e)
+            _TRANSIT_CACHE.set(cache_key, None)
             return None
 
         journeys = data.get("journeys", [])
         if not journeys:
             log.debug("TfL: no route to %s", destination.name)
+            _TRANSIT_CACHE.set(cache_key, None)
             return None
 
         journey = journeys[0]
@@ -78,6 +101,8 @@ class TransitSource(DataSource):
             "TfL: %s → %d min (%d legs)",
             destination.name, route.duration_minutes, len(legs),
         )
+        _TRANSIT_CACHE.set(cache_key, route)
+        _TRANSIT_DISK_CACHE.set(cache_key, route.model_dump())
         return route
 
     def fetch_batch(
@@ -90,10 +115,18 @@ class TransitSource(DataSource):
         """Find transit routes to multiple destinations, skipping failures."""
         log.debug("Finding transit routes to %d destinations", len(destinations))
         results: list[TransitRoute] = []
-        for dest in destinations:
-            route = self.fetch(origin=origin, destination=dest, date=date, time=time)
-            if route is not None:
-                results.append(route)
+        if not destinations:
+            return results
+
+        with ThreadPoolExecutor(max_workers=min(MAX_WORKERS, len(destinations))) as pool:
+            futures = [
+                pool.submit(self.fetch, origin=origin, destination=dest, date=date, time=time)
+                for dest in destinations
+            ]
+            for future in as_completed(futures):
+                route = future.result()
+                if route is not None:
+                    results.append(route)
         results.sort(key=lambda r: r.duration_minutes)
         log.info("Transit: %d/%d destinations reachable", len(results), len(destinations))
         return results

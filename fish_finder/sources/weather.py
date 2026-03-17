@@ -4,6 +4,8 @@ import logging
 
 import httpx
 
+from ..cache import TTLCache
+from ..disk_cache import PersistentTTLCache
 from ..models import HourlyWeather, Location, WeatherForecast
 from .base import DataSource
 
@@ -19,11 +21,26 @@ HOURLY_PARAMS = ",".join([
     "cloud_cover",
 ])
 
+_WEATHER_CACHE = TTLCache[str, WeatherForecast](ttl_seconds=15 * 60, max_entries=64)
+_WEATHER_DISK_CACHE = PersistentTTLCache[dict]("weather_forecast", ttl_seconds=2 * 60 * 60, max_entries=128)
+
 
 class WeatherSource(DataSource):
     """Fetches weather forecasts from the Open-Meteo API (free, no key)."""
 
     def fetch(self, *, location: Location, forecast_days: int = 3) -> WeatherForecast:
+        cache_key = f"{location.lat:.4f},{location.lon:.4f}:{forecast_days}"
+        cached = _WEATHER_CACHE.get(cache_key)
+        if cached is not None:
+            log.debug("Weather cache hit for %s", cache_key)
+            return cached
+        disk_cached = _WEATHER_DISK_CACHE.get(cache_key)
+        if disk_cached is not None:
+            forecast = WeatherForecast(**disk_cached)
+            _WEATHER_CACHE.set(cache_key, forecast)
+            log.debug("Weather disk cache hit for %s", cache_key)
+            return forecast
+
         log.debug(
             "Fetching weather for (%.4f, %.4f), %d days",
             location.lat, location.lon, forecast_days,
@@ -56,7 +73,10 @@ class WeatherSource(DataSource):
         ]
 
         log.info("Weather: %d hourly slots fetched", len(hours))
-        return WeatherForecast(location=location, hours=hours)
+        forecast = WeatherForecast(location=location, hours=hours)
+        _WEATHER_CACHE.set(cache_key, forecast)
+        _WEATHER_DISK_CACHE.set(cache_key, forecast.model_dump())
+        return forecast
 
 
 if __name__ == "__main__":

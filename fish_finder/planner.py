@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
 from .llm.client import LLMClient
@@ -85,8 +86,25 @@ class Planner:
         waters = self.waters_src.fetch(
             location=self.profile.location,
             radius_m=radius,
+            permits=self.profile.permits,
         )
         return waters[:MAX_CANDIDATE_WATERS]
+
+    def gather_base_context(self, intent: FishingIntent) -> tuple[WeatherForecast | None, list]:
+        """Fetch weather and candidate waters concurrently for lower latency."""
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            weather_future = pool.submit(self.get_weather, intent)
+            waters_future = pool.submit(self.find_waters)
+
+            weather: WeatherForecast | None
+            try:
+                weather = weather_future.result()
+            except Exception:
+                log.exception("Weather fetch failed")
+                weather = None
+
+            waters = waters_future.result()
+            return weather, waters
 
     def get_drive_times(self, waters) -> list[TravelInfo]:
         """Calculate driving times via OSRM (static — not time-dependent)."""
@@ -135,12 +153,19 @@ class Planner:
         log.info("Generating recommendation from %d candidate locations", len(travel_data))
         relevant_weather = _filter_weather(weather, intent) if weather else []
 
+        permits_text = ""
+        if self.profile.permits:
+            permits_text = "\nPermits held:\n" + "\n".join(
+                f"  - {p.name}: {p.covers}" for p in self.profile.permits
+            )
+
         profile_summary = (
             f"Location: {self.profile.location.address}\n"
             f"Preferred species: {', '.join(self.profile.target_species)}\n"
             f"Preferred methods: {', '.join(self.profile.methods)}\n"
             f"Max travel: {self.profile.max_travel_minutes} min\n"
             f"Travel mode: {intent.travel_mode}"
+            f"{permits_text}"
         )
 
         if intent.travel_mode == "train":
@@ -177,7 +202,8 @@ def _format_driving_locations(infos: list[TravelInfo]) -> str:
     if not infos:
         return "No locations found within travel range."
     return "\n".join(
-        f"- {t.destination.name} ({t.destination.type}) — "
+        f"- {t.destination.name} ({t.destination.type}, "
+        f"access: {t.destination.access}) — "
         f"{t.duration_minutes} min drive, {t.distance_km} km"
         for t in infos
     )
@@ -187,7 +213,8 @@ def _format_transit_locations(routes: list[TransitRoute]) -> str:
     if not routes:
         return "No locations reachable by public transport."
     return "\n".join(
-        f"- {r.destination.name} ({r.destination.type}) — "
+        f"- {r.destination.name} ({r.destination.type}, "
+        f"access: {r.destination.access}) — "
         f"{r.duration_minutes} min by transit"
         for r in routes
     )

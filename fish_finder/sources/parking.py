@@ -16,7 +16,7 @@ class ParkingSource(DataSource):
     def fetch(self, *, location: Location, radius_m: int = 2000) -> list[ParkingSpot]:
         ql = _build_query(location, radius_m)
         try:
-            elements = overpass.query(ql)
+            elements = overpass.query(ql, max_retries=1, request_timeout=8.0, retry_delay=1.0)
         except ConnectionError:
             log.warning("Parking search failed — Overpass unavailable")
             return []
@@ -30,7 +30,7 @@ class ParkingSource(DataSource):
 
         ql = _build_batch_query(waters, radius_m=2000)
         try:
-            elements = overpass.query(ql)
+            elements = overpass.query(ql, max_retries=1, request_timeout=8.0, retry_delay=1.0)
         except ConnectionError:
             log.warning("Parking batch search failed — Overpass unavailable")
             return {}
